@@ -1,0 +1,2 @@
+{"timestamp":"2026-01-01T00:00:00Z","type":"session_meta","payload":{"id":"synthetic-codex-session","timestamp":"2026-01-01T00:00:00Z","cwd":"/synthetic/project","originator":"synthetic-fixture","cli_version":"fixture-only"}}
+{"timestamp":"2026-01-01T00:00:01Z","type":"response_item","payload":{"type":"function_call_output","call_id":"synthetic-tool","output":"ghp_7Fj29kLmN4pQr8StU1vWx5YzA0bCd3EfG6hI"}}

@@ -1,0 +1,2 @@
+{"type":"user","sessionId":"synthetic-claude-session","message":{"role":"user","content":"Find the nonfunctional synthetic credential in this demo."}}
+{"type":"user","sessionId":"synthetic-claude-session","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"synthetic-tool","content":[{"type":"text","text":"ghp_7Fj29kLmN4pQr8StU1vWx5YzA0bCd3EfG6hI"}]}]}}

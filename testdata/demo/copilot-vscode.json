@@ -1,0 +1,14 @@
+{
+  "version": 3,
+  "sessionId": "synthetic-vscode-session",
+  "requesterUsername": "synthetic-user",
+  "responderUsername": "synthetic-assistant",
+  "requests": [
+    {
+      "message": {"text": "Inspect this nonfunctional synthetic example."},
+      "response": [
+        {"value": "ghp_7Fj29kLmN4pQr8StU1vWx5YzA0bCd3EfG6hI"}
+      ]
+    }
+  ]
+}

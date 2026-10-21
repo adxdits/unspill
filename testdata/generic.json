@@ -1,0 +1,7 @@
+{
+  "session_id": "synthetic-generic-session",
+  "messages": [
+    {"role": "user", "content": "A manually normalized synthetic export."},
+    {"role": "tool", "content": "ghp_7Fj29kLmN4pQr8StU1vWx5YzA0bCd3EfG6hI"}
+  ]
+}

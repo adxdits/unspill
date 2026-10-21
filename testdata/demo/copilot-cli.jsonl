@@ -1,0 +1,2 @@
+{"type":"session.start","id":"synthetic-event-1","parentId":null,"timestamp":"2026-01-01T00:00:00Z","data":{"version":1,"sessionId":"synthetic-copilot-session","producer":"synthetic-fixture","copilotVersion":"fixture-only","startTime":"2026-01-01T00:00:00Z"}}
+{"type":"tool.execution_complete","id":"synthetic-event-2","parentId":"synthetic-event-1","timestamp":"2026-01-01T00:00:01Z","data":{"toolCallId":"synthetic-tool","success":true,"result":{"content":"ghp_7Fj29kLmN4pQr8StU1vWx5YzA0bCd3EfG6hI"}}}

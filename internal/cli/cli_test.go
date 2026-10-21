@@ -2,7 +2,10 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -23,8 +26,8 @@ func TestRun(t *testing.T) {
 		{name: "version flag", args: []string{"--version"}, wantStdout: "unspill test-version\n"},
 		{name: "scan help", args: []string{"scan", "--help"}, wantStdout: scanHelp},
 		{name: "scan short help", args: []string{"scan", "-h"}, wantStdout: scanHelp},
-		{name: "scan unavailable", args: []string{"scan"}, wantCode: 2, wantStderr: "unspill: scanning is not implemented; no files were scanned\n"},
-		{name: "explicit path unavailable", args: []string{"scan", "--path", "/not-a-real-history"}, wantCode: 2, wantStderr: "unspill: scanning is not implemented; no files were scanned\n"},
+		{name: "invalid scan agent", args: []string{"scan", "--agent", "unsupported"}, wantCode: 2, wantStderr: "unspill: invalid scan options; use unspill scan --help\n"},
+		{name: "invalid scan option", args: []string{"scan", "--unknown"}, wantCode: 2, wantStderr: "unspill: invalid scan options; use unspill scan --help\n"},
 		{name: "unknown command", args: []string{"unknown"}, wantCode: 2, wantStderr: "unspill: unknown command; use unspill --help\n"},
 		{name: "extra help arguments", args: []string{"--help", "extra"}, wantCode: 2, wantStderr: "unspill: invalid help arguments; use unspill --help\n"},
 		{name: "extra version arguments", args: []string{"version", "extra"}, wantCode: 2, wantStderr: "unspill: version accepts no arguments\n"},
@@ -53,7 +56,7 @@ func TestArgumentsAreNeverEchoed(t *testing.T) {
 		{untrusted},
 		{"version", untrusted},
 		{"--help", untrusted},
-		{"scan", "--path", untrusted},
+		{"scan", "--unknown", untrusted},
 	} {
 		var stdout, stderr bytes.Buffer
 		if code := Run(args, &stdout, &stderr, "test-version"); code != 2 {
@@ -81,5 +84,48 @@ func TestOutputFailure(t *testing.T) {
 	}
 	if stderr.String() != "unspill: could not write output\n" {
 		t.Fatal("output failure must use a static sanitized error")
+	}
+}
+
+func TestScanSyntheticDemo(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("CLI refuses root")
+	}
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"scan", "--path", "../../testdata/demo", "--format", "json"}, &stdout, &stderr, "test-version")
+	var report struct {
+		Status   string `json:"status"`
+		Findings []struct {
+			Value string `json:"value"`
+		} `json:"findings"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatal("expected a JSON report without progress on stdout")
+	}
+	if code != 1 || report.Status != "complete" || len(report.Findings) != 4 || stderr.Len() != 0 {
+		t.Fatalf("demo failed: code %d, status %s, findings %d", code, report.Status, len(report.Findings))
+	}
+	for _, finding := range report.Findings {
+		if finding.Value != "[REDACTED]" {
+			t.Fatal("finding value must always be masked")
+		}
+	}
+	if strings.Contains(stdout.String(), "7Fj29kLmN4pQ") {
+		t.Fatal("raw fixture value leaked")
+	}
+}
+
+func TestScanReportDestination(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("CLI refuses root")
+	}
+	path := filepath.Join(t.TempDir(), "report.json")
+	args := []string{"scan", "--agent", "generic", "--path", "../../testdata/generic.json", "--format", "json", "--output", path, "--fail-on", "none"}
+	var stdout, stderr bytes.Buffer
+	if code := Run(args, &stdout, &stderr, "test-version"); code != 0 || stdout.Len() != 0 {
+		t.Fatal("sanitized report export failed")
+	}
+	if code := Run(args, &stdout, &stderr, "test-version"); code != 2 {
+		t.Fatal("existing report must not be overwritten")
 	}
 }
