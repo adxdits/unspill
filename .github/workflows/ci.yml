@@ -21,7 +21,12 @@ jobs:
           cache: false
       - name: Check formatting
         shell: bash
-        run: test -z "$(gofmt -l cmd internal scanner)"
+        run: |
+          unformatted="$(gofmt -l cmd internal scanner)"
+          if [[ -n "$unformatted" ]]; then
+            printf 'Files requiring gofmt:\n%s\n' "$unformatted"
+            exit 1
+          fi
       - name: Test
         run: go test ./...
       - name: Vet
