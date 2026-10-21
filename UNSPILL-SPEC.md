@@ -2,7 +2,10 @@
 
 > Working name, not a cleared trademark or an existing implementation.
 > Specification date: 18 October 2026.
-> Status: proposal. No scanner has been implemented or validated yet.
+> Status: product proposal with an experimental implementation of a subset.
+> Implementation update (21 October 2026): CLI and Go API with synthetic-tested
+> Claude Code, Copilot CLI, VS Code export, Codex, and generic-format parsers.
+> No real-history or exact client-version certification has been performed.
 
 ## 1. Summary
 

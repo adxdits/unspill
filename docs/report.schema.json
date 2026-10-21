@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Unspill Sanitized Report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "tool_version", "status", "roots", "coverage", "findings", "errors"],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "tool_version": {"type": "string"},
+    "status": {"enum": ["complete", "incomplete"]},
+    "roots": {"type": "array", "items": {"type": "string"}},
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["files_scanned", "files_skipped", "files_failed"],
+      "properties": {
+        "files_scanned": {"type": "integer", "minimum": 0},
+        "files_skipped": {"type": "integer", "minimum": 0},
+        "files_failed": {"type": "integer", "minimum": 0}
+      }
+    },
+    "findings": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "agent", "rule_id", "severity", "confidence", "file", "line", "session_id", "event_type", "value"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^finding-[1-9][0-9]*$"},
+          "agent": {"enum": ["claude-code", "copilot-cli", "copilot-vscode", "codex", "generic"]},
+          "rule_id": {"type": "string"},
+          "severity": {"enum": ["low", "medium", "high"]},
+          "confidence": {"enum": ["low", "medium", "high"]},
+          "file": {"type": "string"},
+          "line": {"type": ["integer", "null"], "minimum": 1},
+          "session_id": {"type": ["string", "null"]},
+          "event_type": {"enum": ["user_message", "assistant_message", "system_message", "tool_input", "tool_output", null]},
+          "value": {"const": "[REDACTED]"}
+        }
+      }
+    },
+    "errors": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "message", "file", "line"],
+        "properties": {
+          "code": {"type": "string"},
+          "message": {"type": "string"},
+          "file": {"type": ["string", "null"]},
+          "line": {"type": ["integer", "null"], "minimum": 1}
+        }
+      }
+    }
+  }
+}
