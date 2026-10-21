@@ -21,10 +21,13 @@ jobs:
           cache: false
       - name: Check formatting
         shell: bash
-        run: test -z "$(gofmt -l cmd internal)"
+        run: test -z "$(gofmt -l cmd internal scanner)"
       - name: Test
         run: go test ./...
       - name: Vet
         run: go vet ./...
+      - name: Race tests
+        if: runner.os != 'Windows'
+        run: go test -race ./...
       - name: Build
         run: go build -trimpath ./cmd/unspill
