@@ -1,73 +1,104 @@
 # Unspill
 
-Find potential credentials in locally saved AI coding-agent histories.
-Runs offline, masks findings, and never modifies your histories. Available as a
-CLI and Go package, powered by Gitleaks.
+Scan local coding-agent histories for credentials using embedded Gitleaks rules.
+Available as a Go library and CLI. Scanning runs offline, leaves inputs unchanged,
+and redacts credential values in reports.
 
-**Experimental:** tested with synthetic fixtures, not certified for every agent
-version. No release binaries are available yet.
+## Install
 
-## Quick Start
-
-Install [Go 1.24+](https://go.dev/dl/), then run from this repository:
+Requires Go 1.24 or newer. From a checkout:
 
 ```sh
-go build -trimpath -o bin/unspill ./cmd/unspill
-./bin/unspill scan --path ./testdata/demo --fail-on none
+go install ./cmd/unspill
 ```
 
-The demo reports four masked findings using fake credentials. No installed agent
-or account is needed. Building may download dependencies; scanning stays offline.
+Tagged releases provide macOS, Linux, and Windows binaries for AMD64 and ARM64,
+with SHA-256 checksums. Version 0.2.0 is the current release candidate.
 
-## Usage
-
-Scan only histories you are authorized to read:
+## CLI
 
 ```sh
-./bin/unspill scan
-./bin/unspill scan --path ./saved-session.jsonl
-./bin/unspill scan --path ./saved-session.jsonl --format json --output report.json
-./bin/unspill scan --help
+unspill scan --path ./testdata/demo --fail-on none
+unspill scan --path ./session.jsonl --format json --output report.json
+unspill scan --agent generic --path ./export.json
+unspill scan --help
 ```
 
-Without `--path`, discovery is limited to known Claude Code, Copilot CLI, and
-Codex history directories. Use `--agent` to select a format when needed.
+The demo uses fake credentials and produces four masked findings. Without
+`--path`, the CLI searches known Claude Code, Copilot CLI, and Codex directories.
+Only scan files you are authorized to read; the CLI refuses to run as root.
 
-## Supported Formats
+Exit codes: **0** complete below the failure threshold, **1** complete with
+threshold findings, **2** invalid options or incomplete coverage. The default
+threshold is `high`; `--fail-on none` disables findings-based failure.
 
-| Adapter | Input |
-| --- | --- |
-| `claude-code` | Claude Code JSONL histories |
-| `copilot-cli` | Copilot CLI JSONL events, schema 1 |
-| `copilot-vscode` | VS Code JSON chat exports, not native session storage |
-| `codex` | Codex JSONL rollouts |
-| `generic` | Message exports; requires `--agent generic --path ...` |
+## Go Library
 
-Support is limited to documented text fields. Browser chats, Cursor/Windsurf
-databases, and other formats are unsupported. [Format details](docs/formats.md).
+Import `github.com/adxdits/unspill/scanner`. Once the tag is published:
 
-## Safety
+```sh
+go get github.com/adxdits/unspill/scanner@v0.2.0
+```
 
-No uploads, telemetry, credential verification, or history rewriting. Symbolic
-links are excluded. Existing report files are never overwritten; treat reports
-as sensitive because they contain paths and session metadata.
+```go
+package main
 
-A match is not proof of compromise, and no matches is not a safety guarantee.
-Unknown formats, empty inputs, and resource-limit exclusions return an error.
+import (
+	"context"
+	"fmt"
+	"log"
+	"time"
 
-Exit codes: **0** complete without threshold findings; **1** complete with
-threshold findings; **2** error or incomplete scan. The default threshold is
-`high`; `--fail-on none` reports findings without a findings failure exit.
+	"github.com/adxdits/unspill/scanner"
+)
 
-## Development
+func main() {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	report := scanner.Scan(ctx, scanner.Options{Paths: []string{"session.jsonl"}})
+	if err := report.Err(); err != nil {
+		log.Printf("incomplete scan: %v", err)
+	}
+	for _, finding := range report.Findings {
+		fmt.Printf("%s: %s (%s)\n", finding.File, finding.RuleID, finding.Severity)
+	}
+}
+```
+
+`Scan` returns partial findings on failure; findings alone are not Go errors.
+Use `errors.As` with `scanner.ScanError` for individual operational errors.
+`WriteJSON`, `WriteText`, and `SaveJSON` export reports; `SaveJSON` never
+overwrites an existing file. `Options` accepts resource limits with bounded
+defaults. Explicit paths are required unless `Discover` is true. Independent
+scans may run concurrently. Cancellation is checked between records and events,
+not during an individual detection rule.
+
+## Coverage And Safety
+
+Supported inputs: Claude Code JSONL, Copilot CLI schema-1 JSONL, VS Code JSON chat
+exports, Codex JSONL, and explicit generic message exports. See
+[format constraints](docs/formats.md). Compatibility is tested with synthetic
+fixtures, not certified against every client version.
+
+Unknown records, empty inputs, and resource exclusions make coverage incomplete.
+Symbolic links are excluded. Reports contain paths and session metadata, so treat
+them as sensitive. No matches is not a safety guarantee; a match is not proof of
+compromise. There are no uploads, telemetry, or credential-verification requests.
+
+## Development And Release
 
 ```sh
 go test -race ./...
 go vet ./...
+go build -trimpath -o bin/unspill ./cmd/unspill
 ```
 
-Go package: `github.com/adxdits/unspill/scanner`. Use only synthetic test data;
-never submit real credentials or private histories in issues.
+Use synthetic test data only. For a release, update `scanner.Version`, commit,
+and create a matching `vMAJOR.MINOR.PATCH` tag. Pushing that tag runs tests and
+builds six archives with checksums, dependency licenses, and HCL source. The
+workflow creates a **draft** GitHub release for review before publication.
 
-[Specification](UNSPILL-SPEC.md) | [Third-party notices](THIRD_PARTY_NOTICES.md).
-The project license has not yet been selected.
+## License
+
+[MIT](LICENSE). See [third-party notices](THIRD_PARTY_NOTICES.md) for dependencies.
