@@ -8,19 +8,20 @@ permissions:
   contents: read
 
 jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
+
   release:
+    needs: checks
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
-      - name: Test
-        run: go test -race ./...
-      - name: Vet
-        run: go vet ./...
+          go-version: stable
       - name: Check release version
         shell: bash
         run: |
@@ -33,7 +34,7 @@ jobs:
           go run github.com/google/go-licenses/v2@v2.0.1 save ./cmd/unspill --save_path=dist/licenses
           mkdir -p dist/source
           cp -R "$(go list -m -f '{{.Dir}}' github.com/hashicorp/hcl)" dist/source/hcl
-            chmod -R u+w dist/source
+          chmod -R u+w dist/source
       - name: Build archives
         shell: bash
         run: |
