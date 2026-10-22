@@ -6,26 +6,34 @@ and redacts credential values in reports.
 
 ## Install
 
-Requires Go 1.24 or newer. From a checkout:
+Requires Go 1.24 or newer. Install the current source revision:
 
 ```sh
-go install ./cmd/unspill
+go install github.com/adxdits/unspill/cmd/unspill@main
 ```
 
-Tagged releases provide macOS, Linux, and Windows binaries for AMD64 and ARM64,
-with SHA-256 checksums. Version 0.2.0 is the current release candidate.
+The executable is installed in `GOBIN`, or `$(go env GOPATH)/bin` by default;
+that directory must be on `PATH`. Release archives target macOS, Linux, and
+Windows on AMD64 and ARM64, with SHA-256 checksums. The `v0.2.0` tag has not yet
+been published; use `@main` until a tagged release is available.
 
 ## CLI
 
 ```sh
-unspill scan --path ./testdata/demo --fail-on none
 unspill scan --path ./session.jsonl --format json --output report.json
 unspill scan --agent generic --path ./export.json
 unspill scan --help
 ```
 
-The demo uses fake credentials and produces four masked findings. Without
-`--path`, the CLI searches known Claude Code, Copilot CLI, and Codex directories.
+For a demo with four fake credentials, run from a checkout:
+
+```sh
+git clone https://github.com/adxdits/unspill.git
+cd unspill
+go run ./cmd/unspill scan --path ./testdata/demo --fail-on none
+```
+
+Without `--path`, the CLI searches known Claude Code, Copilot CLI, and Codex directories.
 Only scan files you are authorized to read; the CLI refuses to run as root.
 
 Exit codes: **0** complete below the failure threshold, **1** complete with
@@ -34,11 +42,14 @@ threshold is `high`; `--fail-on none` disables findings-based failure.
 
 ## Go Library
 
-Import `github.com/adxdits/unspill/scanner`. Once the tag is published:
+Add the library to your Go module:
 
 ```sh
-go get github.com/adxdits/unspill/scanner@v0.2.0
+go get github.com/adxdits/unspill/scanner@main
 ```
+
+Run this example from the repository root to use the included fixtures. In your
+application, replace `testdata/demo` with the histories you intend to scan.
 
 ```go
 package main
@@ -56,7 +67,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	report := scanner.Scan(ctx, scanner.Options{Paths: []string{"session.jsonl"}})
+	report := scanner.Scan(ctx, scanner.Options{Paths: []string{"testdata/demo"}})
 	if err := report.Err(); err != nil {
 		log.Printf("incomplete scan: %v", err)
 	}
@@ -66,8 +77,9 @@ func main() {
 }
 ```
 
-`Scan` returns partial findings on failure; findings alone are not Go errors.
-Use `errors.As` with `scanner.ScanError` for individual operational errors.
+`Scan` returns partial findings when individual records or blocks fail; findings
+alone are not Go errors. Use `errors.As` with `scanner.ScanError` for operational
+errors, or `errors.Is` with `context.Canceled` and `context.DeadlineExceeded`.
 `WriteJSON`, `WriteText`, and `SaveJSON` export reports; `SaveJSON` never
 overwrites an existing file. `Options` accepts resource limits with bounded
 defaults. Explicit paths are required unless `Discover` is true. Independent
@@ -95,9 +107,12 @@ go build -trimpath -o bin/unspill ./cmd/unspill
 ```
 
 Use synthetic test data only. For a release, update `scanner.Version`, commit,
-and create a matching `vMAJOR.MINOR.PATCH` tag. Pushing that tag runs tests and
-builds six archives with checksums, dependency licenses, and HCL source. The
-workflow creates a **draft** GitHub release for review before publication.
+and create a matching `vMAJOR.MINOR.PATCH` tag. Tagged releases require native
+tests and CLI smoke checks on all three operating systems using Go 1.24 and
+stable, parser fuzzing, and reachable-vulnerability checks for all six targets.
+Release binaries use stable Go and include checksums, dependency licenses, and
+HCL source. The workflow creates a **draft** GitHub release for review before
+publication.
 
 ## License
 

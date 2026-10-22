@@ -15,9 +15,10 @@ records make coverage incomplete rather than being silently skipped.
 
 Reads `message.content` strings or supported content blocks from user/assistant
 entries, including thinking, tool inputs, and nested tool results. Selected
-metadata records are scanned without event attribution. Auto-detection requires
-a recognizable message first; choose `claude-code` explicitly for metadata-first
-files. Binary and redacted-thinking blocks are unsupported. Stored branches are
+metadata records are scanned without event attribution. Discovery selects the
+adapter from the known history root. For explicit metadata-first files, choose
+`claude-code`; content auto-detection requires a recognizable message first.
+Binary and redacted-thinking blocks are unsupported. Stored branches are
 scanned as-is, not reconstructed into an active conversation.
 
 ## Copilot CLI
@@ -25,7 +26,8 @@ scanned as-is, not reconstructed into an active conversation.
 Reads `type`/`data` envelopes: user and assistant messages, reasoning, tool
 arguments/results/errors, system messages, and selected lifecycle metadata.
 Declared session versions other than 1 fail. Message-only excerpts may lack
-session identity. Binary assets and streamed deltas are not reassembled.
+session identity. Opaque reasoning and provider-specific server-tool payloads
+make coverage incomplete. Binary assets and streamed deltas are not reassembled.
 Referenced files and links are never opened.
 
 ## Copilot In VS Code
@@ -58,6 +60,8 @@ per line. Arbitrary raw text is unsupported.
 UTF-8 only. Duplicate JSON fields and nesting deeper than 64 are rejected.
 Encoded JSON text is decoded at most twice. Lines refer to physical source lines.
 A malformed JSON export fails as a whole; independent JSONL records can continue
-after an error. Defaults: 64 MiB per file, 1 MiB per record/export, 10,000 files,
+after an error. For valid JSON with unsupported blocks, independent supported
+text before and after the error is scanned while coverage remains incomplete.
+Defaults: 64 MiB per file, 1 MiB per record/export, 10,000 files,
 and 10,000 findings. Event limits can be raised to 16 MiB. Scans also have fixed
 256 MiB total input and bounded directory traversal limits.
