@@ -80,3 +80,30 @@ func TestSessionHeaderAndAutoDetection(t *testing.T) {
 		}
 	}
 }
+
+func FuzzParse(fuzz *testing.F) {
+	for _, seed := range []struct{ agent, input string }{
+		{"auto", `{"type":"user","message":{"content":"ordinary"}}`},
+		{"claude-code", `{"type":"assistant","message":{"content":[{"type":"tool_use","input":{"command":"ordinary"}}]}}`},
+		{"copilot-cli", `{"type":"session.start","data":{"version":1,"sessionId":"synthetic"}}`},
+		{"copilot-vscode", `{"requests":[{"message":{"text":"ordinary"},"response":[{"value":"ordinary"}]}]}`},
+		{"codex", `{"type":"response_item","payload":{"type":"function_call","arguments":"{\"command\":\"ordinary\"}"}}`},
+		{"generic", `{"messages":[{"role":"assistant","content":null,"tool_calls":[{"function":{"arguments":"ordinary"}}]}]}`},
+		{"auto", `{"type":"user","type":"assistant"}`},
+		{"auto", "\xff"},
+	} {
+		fuzz.Add(seed.agent, []byte(seed.input))
+	}
+	fuzz.Fuzz(func(t *testing.T, agent string, data []byte) {
+		if !Valid(agent) || len(data) > 64<<10 {
+			t.Skip()
+		}
+		parser := Parser{Agent: agent}
+		events, _ := parser.Parse(data, 7)
+		for _, event := range events {
+			if !Valid(event.Agent) || event.Agent == "auto" || event.Line < 7 {
+				t.Fatal("parsed text must retain a valid adapter and physical source line")
+			}
+		}
+	})
+}

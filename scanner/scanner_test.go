@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/adxdits/unspill/internal/agents"
 )
@@ -122,6 +123,49 @@ func TestMalformedLineContinuesAndPreservesPhysicalLocation(t *testing.T) {
 	}
 }
 
+func TestPartialRecordPreservesFindings(t *testing.T) {
+	for _, test := range []struct {
+		name, agent, content string
+	}{
+		{"claude.jsonl", "claude-code", `{"type":"assistant","message":{"content":[{"type":"text","text":"TOKEN"},{"type":"image","source":{}},{"type":"text","text":"TOKEN"}]}}`},
+		{"vscode.json", "copilot-vscode", `{"requests":[{"message":"ordinary","response":[{"value":"TOKEN"},{"kind":"toolInvocation","value":"unsupported"}]},{"message":"TOKEN","response":[]}]}`},
+		{"vscode-parts.json", "copilot-vscode", `{"requests":[{"message":"ordinary","response":[{"value":"TOKEN"},{"kind":"toolInvocation","value":"unsupported"},{"value":"TOKEN"}]}]}`},
+		{"codex.jsonl", "codex", `{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"TOKEN"},{"type":"image"},{"type":"output_text","text":"TOKEN"}]}}`},
+		{"generic.json", "generic", `{"messages":[{"role":"user","content":"TOKEN"},{"role":"future","content":"unsupported"},{"role":"assistant","content":"TOKEN"}]}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			content := strings.ReplaceAll(test.content, "TOKEN", syntheticToken())
+			report := Scan(context.Background(), Options{Paths: []string{fixture(t, test.name, content)}, Agent: test.agent})
+			if report.Err() == nil || report.ExitCode("none") != 2 || report.Coverage.FilesFailed != 1 {
+				t.Fatal("unsupported content must keep coverage incomplete")
+			}
+			if len(report.Findings) != 2 {
+				t.Fatal("supported text before and after unsupported content must retain its findings")
+			}
+			assertSanitizedReport(t, report)
+		})
+	}
+}
+
+func TestOpaqueCopilotContentIsIncomplete(t *testing.T) {
+	for _, field := range []string{"encryptedContent", "reasoningOpaque", "reasoningBlocks", "serverTools"} {
+		t.Run(field, func(t *testing.T) {
+			data, err := json.Marshal(map[string]any{
+				"type": "assistant.message",
+				"data": map[string]any{"content": syntheticToken(), field: "synthetic-opaque-data"},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			report := Scan(context.Background(), Options{Paths: []string{fixture(t, "copilot.jsonl", string(data))}})
+			if report.Err() == nil || len(report.Findings) != 1 {
+				t.Fatal("opaque payloads must mark coverage incomplete without hiding readable findings")
+			}
+			assertSanitizedReport(t, report)
+		})
+	}
+}
+
 func TestJSONLRecordByteLimit(t *testing.T) {
 	content := `{"type":"user","message":{"content":"ordinary"}}`
 	for _, ending := range []string{"", "\n", "\r\n"} {
@@ -199,6 +243,21 @@ func TestSymlinkAndHostileMetadata(t *testing.T) {
 	}
 }
 
+func TestConcurrentScans(t *testing.T) {
+	path := fixture(t, "concurrent.jsonl", `{"type":"user","message":{"content":"`+syntheticToken()+`"}}`)
+	options := Options{Paths: []string{path}}
+	for index := range 4 {
+		t.Run(strconv.Itoa(index), func(t *testing.T) {
+			t.Parallel()
+			report := Scan(context.Background(), options)
+			if report.Err() != nil || len(report.Findings) != 1 {
+				t.Fatal("independent concurrent scans must preserve their own findings")
+			}
+			assertSanitizedReport(t, report)
+		})
+	}
+}
+
 func TestCancellationAndFindingLimit(t *testing.T) {
 	path := fixture(t, "synthetic.jsonl", strings.Repeat(`{"type":"user","message":{"content":"`+syntheticToken()+`"}}`+"\n", 2))
 	report := Scan(context.Background(), Options{Paths: []string{path}, MaxFindings: 1})
@@ -228,6 +287,32 @@ func TestCancellationWhileReadingBlankRecords(t *testing.T) {
 	state.readJSONL(ctx, &agents.Parser{}, cancellingReader{cancel: cancel}, "synthetic.jsonl")
 	if !state.stopped || len(state.report.Errors) != 1 || state.report.Errors[0].Code != "cancelled" {
 		t.Fatal("blank records must not bypass cancellation")
+	}
+}
+
+func TestContextErrors(t *testing.T) {
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	expired, stop := context.WithDeadline(context.Background(), time.Time{})
+	defer stop()
+	for _, test := range []struct {
+		ctx   context.Context
+		cause error
+		code  string
+	}{
+		{cancelled, context.Canceled, "cancelled"},
+		{expired, context.DeadlineExceeded, "deadline_exceeded"},
+	} {
+		t.Run(test.code, func(t *testing.T) {
+			report := Scan(test.ctx, Options{})
+			if !errors.Is(report.Err(), test.cause) {
+				t.Fatal("scan errors must preserve standard context error matching")
+			}
+			var issue ScanError
+			if !errors.As(report.Err(), &issue) || issue.Code != test.code {
+				t.Fatal("context errors must also retain their typed scan error")
+			}
+		})
 	}
 }
 
@@ -324,7 +409,7 @@ func TestDiscoveryUsesOnlySyntheticHomeAndHistoryNames(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	for _, test := range []struct{ path, content string }{
-		{".claude/projects/synthetic/session.jsonl", `{"type":"user","message":{"content":"ordinary"}}`},
+		{".claude/projects/synthetic/session.jsonl", "{\"type\":\"file-history-snapshot\",\"snapshot\":{\"messageId\":\"synthetic\",\"trackedFileBackups\":{}}}\n" + `{"type":"user","message":{"content":"ordinary"}}`},
 		{".claude/projects/synthetic/sessions-index.json", `{}`},
 		{".copilot/session-state/synthetic/events.jsonl", `{"type":"user.message","data":{"content":"ordinary"}}`},
 		{".copilot/session-state/synthetic/workspace.yaml", "synthetic: true"},

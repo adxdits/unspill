@@ -71,10 +71,8 @@ func (parser *Parser) Parse(data []byte, firstLine int) ([]Event, error) {
 	if !supported {
 		return nil, errors.New("unsupported agent")
 	}
-	if err := handler(root, emit); err != nil {
-		return nil, err
-	}
-	return events, nil
+	err = handler(root, emit)
+	return events, err
 }
 
 func detectAgent(root *node) string {
@@ -158,7 +156,16 @@ func copilotMessage(data *node, kind string, emit emitter) error {
 	for _, field := range []string{"content", "transformedContent", "attachments", "reasoningText"} {
 		emit(data.field(field), eventType)
 	}
-	return toolRequests(data.field("toolRequests"), false, emit)
+	if err := toolRequests(data.field("toolRequests"), false, emit); err != nil {
+		return err
+	}
+	for _, field := range []string{"encryptedContent", "reasoningOpaque", "reasoningBlocks", "serverTools"} {
+		value := data.field(field)
+		if value != nil && value.value != nil && (!value.isString() || value.text() != "") {
+			return errors.New("opaque Copilot reasoning or server tool payload is unsupported")
+		}
+	}
+	return nil
 }
 
 func toolRequests(requests *node, generic bool, emit emitter) error {
@@ -262,12 +269,13 @@ func (parser *Parser) vscode(root *node, emit emitter) error {
 		return errors.New("missing VS Code export requests")
 	}
 	parser.SessionID = root.field("sessionId").text()
+	var parseErr error
 	for _, request := range requests.items {
-		if err := vscodeRequest(request, emit); err != nil {
-			return err
+		if err := vscodeRequest(request, emit); err != nil && parseErr == nil {
+			parseErr = err
 		}
 	}
-	return nil
+	return parseErr
 }
 
 func vscodeRequest(request *node, emit emitter) error {
@@ -295,13 +303,17 @@ func vscodeResponse(response *node, emit emitter) error {
 	if response.items == nil {
 		return errors.New("unsupported VS Code response")
 	}
+	var parseErr error
 	for _, part := range response.items {
 		if !part.field("value").isString() || part.field("kind") != nil {
-			return errors.New("unsupported VS Code response part; only exported markdown text is supported")
+			if parseErr == nil {
+				parseErr = errors.New("unsupported VS Code response part; only exported markdown text is supported")
+			}
+			continue
 		}
 		emit(part.field("value"), "assistant_message")
 	}
-	return nil
+	return parseErr
 }
 
 func (parser *Parser) generic(root *node, emit emitter) error {
@@ -310,12 +322,13 @@ func (parser *Parser) generic(root *node, emit emitter) error {
 		return errors.New("generic input requires a messages array")
 	}
 	parser.SessionID = root.field("session_id").text()
+	var parseErr error
 	for _, message := range messages.items {
-		if err := genericMessage(message, emit); err != nil {
-			return err
+		if err := genericMessage(message, emit); err != nil && parseErr == nil {
+			parseErr = err
 		}
 	}
-	return nil
+	return parseErr
 }
 
 func genericMessage(message *node, emit emitter) error {
@@ -360,24 +373,30 @@ func content(value *node, kind string, emit func(*node, string)) error {
 	if value.items == nil {
 		return errors.New("unsupported message content")
 	}
+	var parseErr error
 	for _, block := range value.items {
-		switch block.field("type").text() {
-		case "text", "input_text", "output_text":
-			if !block.field("text").isString() {
-				return errors.New("missing text block value")
-			}
-			emit(block.field("text"), kind)
-		case "thinking":
-			emit(block.field("thinking"), "assistant_message")
-		case "tool_use":
-			emit(block.field("input"), "tool_input")
-		case "tool_result":
-			if err := content(block.field("content"), "tool_output", emit); err != nil {
-				return err
-			}
-		default:
-			return errors.New("unsupported content block; binary and encrypted content are not scanned")
+		if err := contentBlock(block, kind, emit); err != nil && parseErr == nil {
+			parseErr = err
 		}
+	}
+	return parseErr
+}
+
+func contentBlock(block *node, kind string, emit emitter) error {
+	switch block.field("type").text() {
+	case "text", "input_text", "output_text":
+		if !block.field("text").isString() {
+			return errors.New("missing text block value")
+		}
+		emit(block.field("text"), kind)
+	case "thinking":
+		emit(block.field("thinking"), "assistant_message")
+	case "tool_use":
+		emit(block.field("input"), "tool_input")
+	case "tool_result":
+		return content(block.field("content"), "tool_output", emit)
+	default:
+		return errors.New("unsupported content block; binary and encrypted content are not scanned")
 	}
 	return nil
 }

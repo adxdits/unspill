@@ -184,7 +184,7 @@ func (state *run) walk(ctx context.Context, path string, depth int) {
 		state.problem("symlink_skipped", "symbolic link excluded", path, 0)
 		return
 	}
-	if !info.IsDir() && state.options.Discover && !state.historyCandidate(path) {
+	if !info.IsDir() && state.options.Discover && state.historyAgent(path) == "" {
 		return
 	}
 	if info.IsDir() {
@@ -257,22 +257,22 @@ func (state *run) selectFile(ctx context.Context, path string, info os.FileInfo)
 	state.scanFile(ctx, path, info, extension)
 }
 
-func (state *run) historyCandidate(path string) bool {
+func (state *run) historyAgent(path string) string {
 	relative, err := filepath.Rel(state.home, path)
 	if err != nil {
-		return false
+		return ""
 	}
 	relative = filepath.ToSlash(relative)
 	name := filepath.Base(path)
 	switch {
-	case strings.HasPrefix(relative, ".claude/projects/"):
-		return strings.HasSuffix(name, jsonlExtension)
-	case strings.HasPrefix(relative, ".copilot/session-state/"):
-		return name == "events.jsonl"
-	case strings.HasPrefix(relative, ".codex/sessions/"):
-		return strings.HasPrefix(name, "rollout-") && strings.HasSuffix(name, jsonlExtension)
+	case strings.HasPrefix(relative, ".claude/projects/") && strings.HasSuffix(name, jsonlExtension):
+		return "claude-code"
+	case strings.HasPrefix(relative, ".copilot/session-state/") && name == "events.jsonl":
+		return "copilot-cli"
+	case strings.HasPrefix(relative, ".codex/sessions/") && strings.HasPrefix(name, "rollout-") && strings.HasSuffix(name, jsonlExtension):
+		return "codex"
 	default:
-		return false
+		return ""
 	}
 }
 
@@ -294,6 +294,9 @@ func (state *run) scanFile(ctx context.Context, path string, original os.FileInf
 	state.totalBytes += before.Size()
 	reader := io.LimitReader(file, before.Size()+1)
 	parser := agents.Parser{Agent: state.options.Agent}
+	if state.options.Discover && parser.Agent == "auto" {
+		parser.Agent = state.historyAgent(path)
+	}
 	if extension == jsonlExtension {
 		state.readJSONL(ctx, &parser, reader, path)
 	} else {
@@ -370,7 +373,6 @@ func (state *run) record(ctx context.Context, parser *agents.Parser, data []byte
 	events, err := parser.Parse(data, line)
 	if err != nil {
 		state.problem("parse_error", err.Error(), path, line)
-		return
 	}
 	for _, event := range events {
 		if state.cancelled(ctx, path, event.Line) {
@@ -394,10 +396,15 @@ func (state *run) record(ctx context.Context, parser *agents.Parser, data []byte
 }
 
 func (state *run) cancelled(ctx context.Context, path string, line int) bool {
-	if ctx.Err() == nil {
+	cause := ctx.Err()
+	if cause == nil {
 		return false
 	}
-	state.problem("cancelled", "scan cancelled; coverage is incomplete", path, line)
+	code := "cancelled"
+	if cause == context.DeadlineExceeded {
+		code = "deadline_exceeded"
+	}
+	state.problem(code, "scan cancelled; coverage is incomplete", path, line)
 	state.stopped = true
 	return true
 }

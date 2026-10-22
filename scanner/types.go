@@ -3,6 +3,7 @@
 package scanner
 
 import (
+	"context"
 	"errors"
 
 	"github.com/adxdits/unspill/internal/agents"
@@ -56,6 +57,18 @@ type ScanError struct {
 // Error returns the error code and message without source metadata.
 func (issue ScanError) Error() string {
 	return issue.Code + ": " + issue.Message
+}
+
+// Unwrap supports errors.Is for cancellation and deadline failures.
+func (issue ScanError) Unwrap() error {
+	switch issue.Code {
+	case "cancelled":
+		return context.Canceled
+	case "deadline_exceeded":
+		return context.DeadlineExceeded
+	default:
+		return nil
+	}
 }
 
 // Report contains findings and coverage for one scan. Status is complete or incomplete.
