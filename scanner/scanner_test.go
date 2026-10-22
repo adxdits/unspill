@@ -5,12 +5,17 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/adxdits/unspill/internal/agents"
 )
 
 func fixture(t *testing.T, name, content string) string {
@@ -117,6 +122,37 @@ func TestMalformedLineContinuesAndPreservesPhysicalLocation(t *testing.T) {
 	}
 }
 
+func TestJSONLRecordByteLimit(t *testing.T) {
+	content := `{"type":"user","message":{"content":"ordinary"}}`
+	for _, ending := range []string{"", "\n", "\r\n"} {
+		t.Run("ending="+strconv.Quote(ending), func(t *testing.T) {
+			path := fixture(t, "clean.jsonl", content+ending)
+			report := Scan(context.Background(), Options{Paths: []string{path}, MaxEventBytes: len(content)})
+			if err := report.Err(); err != nil {
+				t.Fatalf("a record exactly at the byte limit must be accepted: %v", err)
+			}
+			report = Scan(context.Background(), Options{Paths: []string{path}, MaxEventBytes: len(content) - 1})
+			if report.Err() == nil {
+				t.Fatal("an oversized record must fail")
+			}
+		})
+	}
+	path := fixture(t, "blank.jsonl", "   \n"+content+"\n")
+	report := Scan(context.Background(), Options{Paths: []string{path}, MaxEventBytes: 2})
+	if len(report.Errors) == 0 || report.Errors[0].Code != "resource_limit" || report.Errors[0].Line == nil || *report.Errors[0].Line != 1 {
+		t.Fatal("oversized whitespace records must not bypass the byte limit")
+	}
+}
+
+func TestEmptyFileDoesNotHideBehindScannedFiles(t *testing.T) {
+	clean := fixture(t, "clean.jsonl", `{"type":"user","message":{"content":"ordinary"}}`)
+	blank := fixture(t, "blank.jsonl", "\n\n")
+	report := Scan(context.Background(), Options{Paths: []string{clean, blank}})
+	if report.Err() == nil || report.Coverage.FilesFailed != 1 || report.Coverage.FilesScanned != 1 {
+		t.Fatal("an empty JSONL file must be reported even when another file contains events")
+	}
+}
+
 func TestReportFiles(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "report.json")
 	report := Scan(context.Background(), Options{Paths: []string{fixture(t, "clean.jsonl", `{"type":"user","message":{"content":"ordinary code"}}`)}})
@@ -173,6 +209,46 @@ func TestCancellationAndFindingLimit(t *testing.T) {
 	cancel()
 	if Scan(ctx, Options{Paths: []string{path}}).ExitCode("high") != 2 {
 		t.Fatal("cancelled scan must not succeed")
+	}
+}
+
+type cancellingReader struct {
+	cancel context.CancelFunc
+}
+
+func (reader cancellingReader) Read(buffer []byte) (int, error) {
+	reader.cancel()
+	return copy(buffer, "\n\n\n"), io.EOF
+}
+
+func TestCancellationWhileReadingBlankRecords(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	state := &run{options: withDefaults(Options{}), report: Report{Status: "complete"}}
+	state.readJSONL(ctx, &agents.Parser{}, cancellingReader{cancel: cancel}, "synthetic.jsonl")
+	if !state.stopped || len(state.report.Errors) != 1 || state.report.Errors[0].Code != "cancelled" {
+		t.Fatal("blank records must not bypass cancellation")
+	}
+}
+
+func TestReportErr(t *testing.T) {
+	for _, report := range []Report{{Status: "complete"}, {Status: "complete", Findings: []Finding{{Severity: "high"}}}} {
+		if report.Err() != nil {
+			t.Fatal("findings alone are not operational errors")
+		}
+	}
+	if (Report{}).Err() == nil {
+		t.Fatal("an uninitialized report must not indicate success")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	report := Scan(ctx, Options{})
+	var issue ScanError
+	if !errors.As(report.Err(), &issue) || issue.Code != "cancelled" || len(report.Errors) != 1 {
+		t.Fatal("a cancelled scan must expose a typed operational error")
+	}
+	if report.ToolVersion != Version || report.SchemaVersion != "1" {
+		t.Fatal("early cancellation must preserve report version metadata")
 	}
 }
 

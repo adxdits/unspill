@@ -31,11 +31,17 @@ type run struct {
 	stopped    bool
 }
 
+// Scan inspects the selected histories and returns a sanitized report, including
+// partial findings on failure. Independent calls may run concurrently.
+// Cancellation is checked between records and events, not inside a detection rule.
 func Scan(ctx context.Context, options Options) Report {
 	state := &run{options: options, report: Report{
 		SchemaVersion: "1", ToolVersion: Version, Status: "complete",
 		Roots: []string{}, Findings: []Finding{}, Errors: []ScanError{},
 	}, seen: make(map[string]bool)}
+	if state.cancelled(ctx, "", 0) {
+		return state.report
+	}
 	if !state.setup() {
 		return state.report
 	}
@@ -60,10 +66,6 @@ func (state *run) setup() bool {
 	state.options = withDefaults(state.options)
 	if !agents.Valid(state.options.Agent) || (state.options.Discover && len(state.options.Paths) != 0) {
 		state.problem("invalid_options", "invalid agent or conflicting scan paths", "", 0)
-		return false
-	}
-	if os.Geteuid() == 0 {
-		state.problem("permission_error", "do not run Unspill as root", "", 0)
 		return false
 	}
 	if !validLimits(state.options) {
@@ -162,9 +164,7 @@ func (state *run) walk(ctx context.Context, path string, depth int) {
 	if state.stopped {
 		return
 	}
-	if ctx.Err() != nil {
-		state.problem("cancelled", "scan cancelled; coverage is incomplete", path, 0)
-		state.stopped = true
+	if state.cancelled(ctx, path, 0) {
 		return
 	}
 	state.entries++
@@ -203,6 +203,9 @@ func (state *run) walkDirectory(ctx context.Context, path string, depth int) {
 	defer directory.Close()
 	var names []string
 	for {
+		if state.cancelled(ctx, path, 0) {
+			return
+		}
 		batch, err := directory.Readdirnames(128)
 		names = append(names, batch...)
 		if len(names)+state.entries > 50000 {
@@ -314,13 +317,23 @@ func inputChanged(file *os.File, path string, before os.FileInfo) bool {
 
 func (state *run) readJSONL(ctx context.Context, parser *agents.Parser, reader io.Reader, path string) {
 	lines := bufio.NewScanner(reader)
-	lines.Buffer(make([]byte, 4096), state.options.MaxEventBytes+1)
+	maxTokenBytes := state.options.MaxEventBytes + 2
+	lines.Buffer(make([]byte, min(4096, maxTokenBytes)), maxTokenBytes)
 	line := 0
+	records := 0
 	for lines.Scan() {
 		line++
+		if state.cancelled(ctx, path, line) {
+			return
+		}
+		if len(lines.Bytes()) > state.options.MaxEventBytes {
+			state.problem("resource_limit", "record exceeds event byte limit", path, line)
+			continue
+		}
 		if len(bytes.TrimSpace(lines.Bytes())) == 0 {
 			continue
 		}
+		records++
 		state.record(ctx, parser, lines.Bytes(), path, line)
 		if state.stopped {
 			break
@@ -328,6 +341,8 @@ func (state *run) readJSONL(ctx context.Context, parser *agents.Parser, reader i
 	}
 	if err := lines.Err(); err != nil {
 		state.problem("read_or_event_limit", "could not read record or record exceeds event byte limit", path, line+1)
+	} else if records == 0 && !state.stopped {
+		state.problem("empty_input", "input file contains no JSON records", path, 0)
 	}
 }
 
@@ -345,9 +360,7 @@ func (state *run) readJSON(ctx context.Context, parser *agents.Parser, reader io
 }
 
 func (state *run) record(ctx context.Context, parser *agents.Parser, data []byte, path string, line int) {
-	if ctx.Err() != nil {
-		state.problem("cancelled", "scan cancelled; coverage is incomplete", path, line)
-		state.stopped = true
+	if state.cancelled(ctx, path, line) {
 		return
 	}
 	if len(data) > state.options.MaxEventBytes {
@@ -360,6 +373,9 @@ func (state *run) record(ctx context.Context, parser *agents.Parser, data []byte
 		return
 	}
 	for _, event := range events {
+		if state.cancelled(ctx, path, event.Line) {
+			return
+		}
 		state.events++
 		for _, match := range state.engine.Scan(event.Text) {
 			if len(state.report.Findings) >= state.options.MaxFindings {
@@ -375,6 +391,15 @@ func (state *run) record(ctx context.Context, parser *agents.Parser, data []byte
 			})
 		}
 	}
+}
+
+func (state *run) cancelled(ctx context.Context, path string, line int) bool {
+	if ctx.Err() == nil {
+		return false
+	}
+	state.problem("cancelled", "scan cancelled; coverage is incomplete", path, line)
+	state.stopped = true
+	return true
 }
 
 func pointer[value any](item value) *value { return &item }

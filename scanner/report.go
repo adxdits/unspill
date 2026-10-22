@@ -10,6 +10,7 @@ import (
 	"strings"
 )
 
+// WriteJSON writes an indented JSON report without closing writer.
 func (report Report) WriteJSON(writer io.Writer) error {
 	encoder := json.NewEncoder(writer)
 	encoder.SetIndent("", "  ")
@@ -19,6 +20,8 @@ func (report Report) WriteJSON(writer io.Writer) error {
 	return nil
 }
 
+// SaveJSON creates a report without overwriting existing files.
+// File permissions are 0600 on Unix; Windows permissions depend on inherited ACLs.
 func (report Report) SaveJSON(path string) error {
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
@@ -35,6 +38,7 @@ func (report Report) SaveJSON(path string) error {
 	return nil
 }
 
+// WriteText writes a terminal report without closing writer.
 func (report Report) WriteText(writer io.Writer) error {
 	var output bytes.Buffer
 	fmt.Fprintln(&output, "Unspill - local, read-only scan")
