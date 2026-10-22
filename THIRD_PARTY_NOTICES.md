@@ -30,10 +30,14 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
-## Distribution Gate
+## Binary Distributions
 
-The module graph also includes dependencies such as Viper, Zerolog, and their
-transitive dependencies. Their complete license/notice inventory must be
-collected and reviewed before binary redistribution. This document is not a
-claim that all third-party redistribution obligations have been completed.
-The Unspill project license has not yet been selected.
+Release archives include a `licenses/` directory collected from the binary's
+dependencies using go-licenses v2.0.1. This includes Gitleaks, Viper, Zerolog,
+and their linked transitive dependencies. Versioned dependencies are recorded
+in go.mod and go.sum.
+
+HashiCorp HCL v1.0.0 is licensed under MPL-2.0. Its unmodified module source and
+license are included in `source/hcl/` in each release archive. Other dependency
+licenses and copyright notices are preserved in `licenses/`. Unspill's own
+source is licensed under the MIT license in LICENSE.

@@ -1,0 +1,67 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Test
+        run: go test -race ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Check release version
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$(go run ./cmd/unspill version)" == "unspill $version" ]]
+      - name: Collect dependency licenses and source
+        shell: bash
+        run: |
+          go run github.com/google/go-licenses/v2@v2.0.1 save ./cmd/unspill --save_path=dist/licenses
+          mkdir -p dist/source
+          cp -R "$(go list -m -f '{{.Dir}}' github.com/hashicorp/hcl)" dist/source/hcl
+            chmod -R u+w dist/source
+      - name: Build archives
+        shell: bash
+        run: |
+          mkdir -p dist/release
+          version="${GITHUB_REF_NAME#v}"
+          for target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64 windows/arm64; do
+            os="${target%/*}"
+            arch="${target#*/}"
+            name="unspill_${version}_${os}_${arch}"
+            stage="dist/stage/$name"
+            mkdir -p "$stage"
+            binary=unspill
+            if [[ "$os" == windows ]]; then binary=unspill.exe; fi
+            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags="-s -w -X main.version=$version" -o "$stage/$binary" ./cmd/unspill
+            cp README.md LICENSE THIRD_PARTY_NOTICES.md "$stage/"
+            cp -R docs dist/licenses dist/source "$stage/"
+            if [[ "$os" == windows ]]; then
+              (cd "$stage" && zip -qr "../../release/$name.zip" .)
+            else
+              tar -czf "dist/release/$name.tar.gz" -C "$stage" .
+            fi
+          done
+          (cd dist/release && sha256sum *.tar.gz *.zip > checksums.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: dist/release/*
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/release/* --verify-tag --draft --title "Unspill $GITHUB_REF_NAME" --generate-notes
