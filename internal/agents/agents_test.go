@@ -81,6 +81,81 @@ func TestSessionHeaderAndAutoDetection(t *testing.T) {
 	}
 }
 
+func TestCopilotAdditionalEvents(t *testing.T) {
+	tests := []struct {
+		kind, data, eventType string
+	}{
+		{"assistant.intent", `{"intent":"needle"}`, "assistant_message"},
+		{"tool.execution_progress", `{"progressMessage":"needle"}`, "tool_output"},
+		{"tool.execution_partial_result", `{"partialOutput":"needle"}`, "tool_output"},
+		{"hook.start", `{"input":{"command":"needle"}}`, ""},
+		{"hook.end", `{"output":{"message":"needle"}}`, ""},
+		{"hook.progress", `{"message":"needle"}`, ""},
+		{"skill.invoked", `{"content":"needle"}`, "system_message"},
+		{"instruction.update", `{"content":"needle"}`, "system_message"},
+		{"subagent.started", `{"agentDescription":"needle"}`, ""},
+		{"subagent.completed", `{"agentName":"needle"}`, ""},
+		{"subagent.failed", `{"error":"needle"}`, ""},
+		{"subagent.selected", `{"agentDisplayName":"needle"}`, ""},
+		{"subagent.deselected", `{}`, ""},
+		{"assistant.usage", `{"model":"needle","inputTokens":10}`, ""},
+		{"assistant.message_start", `{"messageId":"needle"}`, ""},
+		{"assistant.streaming_delta", `{"totalResponseSizeBytes":10}`, ""},
+		{"session.usage_info", `{"currentTokens":10}`, ""},
+		{"session.idle", `{}`, ""},
+		{"session.title_changed", `{"title":"needle"}`, ""},
+		{"session.mode_changed", `{"newMode":"plan"}`, ""},
+		{"session.plan_changed", `{"operation":"update"}`, ""},
+		{"session.workspace_file_changed", `{"path":"needle"}`, ""},
+		{"session.handoff", `{"summary":"needle"}`, ""},
+		{"session.task_complete", `{"summary":"needle"}`, ""},
+		{"permission.requested", `{"permissionRequest":{"fullCommandText":"needle"}}`, ""},
+		{"permission.completed", `{"result":{"feedback":"needle"}}`, ""},
+		{"user_input.requested", `{"question":"needle"}`, ""},
+		{"user_input.completed", `{"answer":"needle"}`, ""},
+		{"elicitation.requested", `{"message":"needle"}`, ""},
+		{"elicitation.completed", `{"content":{"answer":"needle"}}`, ""},
+		{"external_tool.requested", `{"arguments":{"command":"needle"}}`, "tool_input"},
+		{"external_tool.completed", `{"requestId":"needle"}`, ""},
+	}
+	for _, test := range tests {
+		t.Run(test.kind, func(t *testing.T) {
+			parser := Parser{Agent: "copilot-cli", SessionID: "synthetic-session"}
+			events, err := parser.Parse([]byte(`{"type":"`+test.kind+`","data":`+test.data+`}`), 42)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(test.data, "needle") && len(events) != 1 {
+				t.Fatal("readable event text must be scanned")
+			}
+			for _, event := range events {
+				expected := Event{Agent: "copilot-cli", SessionID: "synthetic-session", Line: 42, Type: test.eventType, Text: event.Text}
+				if event != expected {
+					t.Fatal("incorrect Copilot event attribution")
+				}
+			}
+		})
+	}
+}
+
+func TestCopilotEmptyOptionalPayloads(t *testing.T) {
+	for _, field := range []string{"encryptedContent", "reasoningOpaque", "reasoningBlocks", "serverTools"} {
+		values := []string{"null", `""`}
+		if field == "reasoningBlocks" || field == "serverTools" {
+			values = append(values, `[]`, `{}`)
+		}
+		for _, value := range values {
+			t.Run(field+"="+value, func(t *testing.T) {
+				parser := Parser{Agent: "copilot-cli"}
+				events, err := parser.Parse([]byte(`{"type":"assistant.message","data":{"content":"needle","`+field+`":`+value+`}}`), 7)
+				if err != nil || len(events) != 1 || events[0].Text != "needle" {
+					t.Fatal("empty optional payloads must not hide readable content or fail coverage")
+				}
+			})
+		}
+	}
+}
+
 func FuzzParse(fuzz *testing.F) {
 	for _, seed := range []struct{ agent, input string }{
 		{"auto", `{"type":"user","message":{"content":"ordinary"}}`},

@@ -128,16 +128,26 @@ func (parser *Parser) copilot(root *node, emit emitter) error {
 		emit(data, "")
 	case "user.message", assistantMessageEvent:
 		return copilotMessage(data, kind, emit)
-	case "tool.execution_start", "tool.user_requested":
+	case "tool.execution_start", "tool.user_requested", "external_tool.requested":
 		emit(data.field("arguments"), "tool_input")
 	case "tool.execution_complete":
 		emit(data.field("result"), "tool_output")
 		emit(data.field("error"), "tool_output")
+	case "tool.execution_progress", "tool.execution_partial_result":
+		emit(data, "tool_output")
 	case "assistant.reasoning":
 		emit(data.field("content"), "assistant_message")
-	case "system.message", "system.notification":
+	case "assistant.intent":
+		emit(data, "assistant_message")
+	case "system.message", "system.notification", "skill.invoked", "instruction.update":
 		emit(data, "system_message")
-	case "session.resume", "session.shutdown", "session.info", "session.error", "session.warning", "session.model_change", "session.truncation", "session.compaction_start", "session.compaction_complete", "session.context_changed", "assistant.turn_start", "assistant.turn_end", "abort":
+	case "session.resume", "session.shutdown", "session.info", "session.error", "session.warning", "session.model_change", "session.truncation", "session.compaction_start", "session.compaction_complete", "session.context_changed", "assistant.turn_start", "assistant.turn_end", "abort",
+		"assistant.usage", "assistant.message_start", "assistant.streaming_delta",
+		"session.usage_info", "session.idle", "session.title_changed", "session.mode_changed",
+		"session.plan_changed", "session.workspace_file_changed", "session.handoff", "session.task_complete",
+		"subagent.started", "subagent.completed", "subagent.failed", "subagent.selected", "subagent.deselected",
+		"hook.start", "hook.end", "hook.progress", "permission.requested", "permission.completed",
+		"user_input.requested", "user_input.completed", "elicitation.requested", "elicitation.completed", "external_tool.completed":
 		emit(data, "")
 	default:
 		return errors.New("unsupported Copilot record type")
@@ -161,9 +171,14 @@ func copilotMessage(data *node, kind string, emit emitter) error {
 	}
 	for _, field := range []string{"encryptedContent", "reasoningOpaque", "reasoningBlocks", "serverTools"} {
 		value := data.field(field)
-		if value != nil && value.value != nil && (!value.isString() || value.text() != "") {
-			return errors.New("opaque Copilot reasoning or server tool payload is unsupported")
+		if value == nil || value.value == nil || value.isString() && value.text() == "" {
+			continue
 		}
+		if (field == "reasoningBlocks" || field == "serverTools") &&
+			(value.fields != nil && len(value.fields) == 0 || value.items != nil && len(value.items) == 0) {
+			continue
+		}
+		return errors.New("opaque Copilot reasoning or server tool payload is unsupported")
 	}
 	return nil
 }
