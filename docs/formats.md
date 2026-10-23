@@ -24,11 +24,26 @@ scanned as-is, not reconstructed into an active conversation.
 ## Copilot CLI
 
 Reads `type`/`data` envelopes: user and assistant messages, reasoning, tool
-arguments/results/errors, system messages, and selected lifecycle metadata.
+arguments/results/errors, tool progress and partial-output snapshots, assistant
+intent, system messages, skill invocations, and instruction updates. Selected
+lifecycle metadata includes usage, message-start and streaming byte counts,
+session idle/title/mode/plan/workspace changes, handoffs, task completion,
+subagent lifecycle, hooks, permission requests and decisions, user input,
+elicitation, and external-tool requests and completions. Readable strings in
+these metadata payloads are scanned without message attribution. Event shapes
+are based on the public [Copilot SDK session event definitions](https://github.com/github/copilot-sdk/blob/main/nodejs/src/generated/session-events.ts).
+
 Declared session versions other than 1 fail. Message-only excerpts may lack
-session identity. Opaque reasoning and provider-specific server-tool payloads
-make coverage incomplete. Binary assets and streamed deltas are not reassembled.
-Referenced files and links are never opened.
+session identity; metadata-first excerpts need `--agent copilot-cli` unless
+discovered under the known history root. Empty `reasoningBlocks` and `serverTools`
+objects or arrays do not affect coverage. Nonempty opaque reasoning and
+provider-specific server-tool payloads still make coverage incomplete; readable
+message text and tool arguments are scanned even when these payloads are present.
+Unknown event types, binary assets, and streaming text/tool-input deltas remain
+unsupported. Streaming byte-count metadata contains no text chunks and needs no
+reassembly. Partial tool-output snapshots are scanned independently; duplicate
+stored text remains separate occurrences. Referenced files and links are never
+opened.
 
 ## Copilot In VS Code
 
