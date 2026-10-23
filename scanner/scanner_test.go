@@ -147,22 +147,83 @@ func TestPartialRecordPreservesFindings(t *testing.T) {
 	}
 }
 
-func TestOpaqueCopilotContentIsIncomplete(t *testing.T) {
-	for _, field := range []string{"encryptedContent", "reasoningOpaque", "reasoningBlocks", "serverTools"} {
-		t.Run(field, func(t *testing.T) {
-			data, err := json.Marshal(map[string]any{
-				"type": "assistant.message",
-				"data": map[string]any{"content": syntheticToken(), field: "synthetic-opaque-data"},
-			})
-			if err != nil {
-				t.Fatal(err)
+func TestCopilotAdditionalEventFindings(t *testing.T) {
+	for _, test := range []struct{ kind, data, eventType string }{
+		{"assistant.intent", `{"intent":"TOKEN"}`, "assistant_message"},
+		{"tool.execution_progress", `{"progressMessage":"TOKEN"}`, "tool_output"},
+		{"tool.execution_partial_result", `{"partialOutput":"TOKEN"}`, "tool_output"},
+		{"hook.start", `{"input":{"command":"TOKEN"}}`, ""},
+		{"hook.end", `{"output":{"message":"TOKEN"}}`, ""},
+		{"skill.invoked", `{"content":"TOKEN"}`, "system_message"},
+		{"instruction.update", `{"content":"TOKEN"}`, "system_message"},
+		{"permission.requested", `{"permissionRequest":{"fullCommandText":"TOKEN"}}`, ""},
+		{"subagent.failed", `{"error":"TOKEN"}`, ""},
+		{"user_input.completed", `{"answer":"TOKEN"}`, ""},
+		{"elicitation.completed", `{"content":{"answer":"TOKEN"}}`, ""},
+		{"external_tool.requested", `{"arguments":{"command":"TOKEN"}}`, "tool_input"},
+		{"assistant.message", `{"content":"TOKEN","reasoningBlocks":[],"serverTools":{}}`, "assistant_message"},
+	} {
+		t.Run(test.kind, func(t *testing.T) {
+			content := strings.Join([]string{
+				`{"type":"session.start","data":{"version":1,"sessionId":"synthetic-session"}}`,
+				`{"type":"assistant.usage","data":{"model":"synthetic-model","inputTokens":10}}`,
+				`{"type":"` + test.kind + `","data":` + strings.ReplaceAll(test.data, "TOKEN", syntheticToken()) + `}`,
+				`{"type":"session.idle","data":{}}`,
+			}, "\n")
+			path := fixture(t, "copilot.jsonl", content)
+			report := Scan(context.Background(), Options{Paths: []string{path}})
+			if report.Err() != nil || report.Coverage.FilesScanned != 1 || len(report.Findings) != 1 {
+				t.Fatalf("expected complete coverage and one finding: %v", report.Errors)
 			}
-			report := Scan(context.Background(), Options{Paths: []string{fixture(t, "copilot.jsonl", string(data))}})
-			if report.Err() == nil || len(report.Findings) != 1 {
-				t.Fatal("opaque payloads must mark coverage incomplete without hiding readable findings")
+			finding := report.Findings[0]
+			if finding.Agent != "copilot-cli" || finding.Line == nil || *finding.Line != 3 || finding.SessionID == nil || *finding.SessionID != "synthetic-session" {
+				t.Fatal("incorrect Copilot finding attribution")
+			}
+			if !reflect.DeepEqual(finding.EventType, optional(test.eventType)) {
+				t.Fatal("incorrect Copilot finding event type")
+			}
+			assertSanitizedReport(t, report)
+			assertPreservedAndDeterministic(t, path, "auto", sha256.Sum256([]byte(content)), report)
+		})
+	}
+}
+
+func TestCopilotUnsupportedRecordsRemainIncomplete(t *testing.T) {
+	for _, kind := range []string{"session.future", "assistant.future", "tool.future", "session.binary_asset", "assistant.message_delta", "assistant.reasoning_delta", "assistant.tool_call_delta"} {
+		t.Run(kind, func(t *testing.T) {
+			content := strings.Join([]string{
+				`{"type":"user.message","data":{"content":"TOKEN"}}`,
+				`{"type":"` + kind + `","data":{"content":"TOKEN","deltaContent":"TOKEN"}}`,
+				`{"type":"assistant.message","data":{"content":"TOKEN"}}`,
+			}, "\n")
+			path := fixture(t, "copilot.jsonl", strings.ReplaceAll(content, "TOKEN", syntheticToken()))
+			report := Scan(context.Background(), Options{Paths: []string{path}})
+			if report.ExitCode("none") != 2 || report.Coverage.FilesFailed != 1 || len(report.Findings) != 2 {
+				t.Fatal("unsupported records must fail coverage without hiding surrounding findings")
 			}
 			assertSanitizedReport(t, report)
 		})
+	}
+}
+
+func TestOpaqueCopilotContentIsIncomplete(t *testing.T) {
+	for _, field := range []string{"encryptedContent", "reasoningOpaque", "reasoningBlocks", "serverTools"} {
+		for index, value := range []any{"synthetic-opaque-data", []any{"synthetic-opaque-data"}, map[string]any{"content": "synthetic-opaque-data"}, false} {
+			t.Run(field+"/"+strconv.Itoa(index), func(t *testing.T) {
+				data, err := json.Marshal(map[string]any{
+					"type": "assistant.message",
+					"data": map[string]any{"content": syntheticToken(), field: value},
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				report := Scan(context.Background(), Options{Paths: []string{fixture(t, "copilot.jsonl", string(data))}})
+				if report.Err() == nil || len(report.Findings) != 1 {
+					t.Fatal("opaque payloads must mark coverage incomplete without hiding readable findings")
+				}
+				assertSanitizedReport(t, report)
+			})
+		}
 	}
 }
 
