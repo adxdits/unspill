@@ -1,5 +1,7 @@
 # Unspill
 
+![Coffee spill](docs/coffee-spill.webp)
+
 Scan local coding-agent histories for credentials using embedded Gitleaks rules.
 Available as a Go library and CLI. Scanning runs offline, leaves inputs unchanged,
 and redacts credential values in reports.
